@@ -22,10 +22,12 @@ ARG CUDA_ARCHS="86"
 RUN git clone --depth 1 --branch ${LLAMA_CPP_BRANCH} \
         https://github.com/OpenMOSS/llama.cpp.git llama.cpp
 
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
 RUN cd llama.cpp \
     && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \
              -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
-             -DGGML_CUDA_VMM=OFF \
+             -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs" \
+             -DCMAKE_SHARED_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs" \
     && cmake --build build --target llama-moss-tts -j$(nproc)
 
 # ─────────────────────────────────────────────
