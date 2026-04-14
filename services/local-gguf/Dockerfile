@@ -39,7 +39,7 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip libsndfile1 ca-certificates curl \
+    python3 python3-venv python3-pip libsndfile1 libgomp1 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN update-alternatives --install /usr/bin/python  python  /usr/bin/python3 1
