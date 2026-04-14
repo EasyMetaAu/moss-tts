@@ -1,5 +1,5 @@
 {"id": "voice-001", "audio_path": "voices/Abigail.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Abigail"}
-{"id": "voice-002", "audio_path": "voices/Adam.mp3", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Adam"}
+{"id": "voice-002", "audio_path": "voices/Adam.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Adam"}
 {"id": "voice-003", "audio_path": "voices/Adrian.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Adrian"}
 {"id": "voice-004", "audio_path": "voices/Alexander.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Alexander"}
 {"id": "voice-005", "audio_path": "voices/Alice.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Alice"}
@@ -14,18 +14,45 @@
 {"id": "voice-014", "audio_path": "voices/Gabriel.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Gabriel"}
 {"id": "voice-015", "audio_path": "voices/Gianna.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Gianna"}
 {"id": "voice-016", "audio_path": "voices/Henry.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Henry"}
-{"id": "voice-017", "audio_path": "voices/Ian.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Ian"}
-{"id": "voice-018", "audio_path": "voices/Jade.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Jade"}
-{"id": "voice-019", "audio_path": "voices/Jeremiah.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Jeremiah"}
-{"id": "voice-020", "audio_path": "voices/Jordan.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Jordan"}
-{"id": "voice-021", "audio_path": "voices/Julian.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Julian"}
-{"id": "voice-022", "audio_path": "voices/Layla.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Layla"}
-{"id": "voice-023", "audio_path": "voices/Leonardo.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Leonardo"}
-{"id": "voice-024", "audio_path": "voices/Michael.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Michael"}
-{"id": "voice-025", "audio_path": "voices/Miles.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Miles"}
-{"id": "voice-026", "audio_path": "voices/Olivia.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Olivia"}
-{"id": "voice-027", "audio_path": "voices/Robert.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Robert"}
-{"id": "voice-028", "audio_path": "voices/Ryan.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Ryan"}
-{"id": "voice-029", "audio_path": "voices/Sarah.mp3", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Sarah"}
-{"id": "voice-030", "audio_path": "voices/Taylor.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Taylor"}
-{"id": "voice-031", "audio_path": "voices/Thomas.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Thomas"}
+{"id": "voice-017", "audio_path": "voices/HiuGaai.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "HiuGaai"}
+{"id": "voice-018", "audio_path": "voices/HiuMaan.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "HiuMaan"}
+{"id": "voice-019", "audio_path": "voices/HsiaoChen.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "HsiaoChen"}
+{"id": "voice-020", "audio_path": "voices/HsiaoYu.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "HsiaoYu"}
+{"id": "voice-021", "audio_path": "voices/Ian.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Ian"}
+{"id": "voice-022", "audio_path": "voices/Jade.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Jade"}
+{"id": "voice-023", "audio_path": "voices/Jeremiah.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Jeremiah"}
+{"id": "voice-024", "audio_path": "voices/Jordan.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Jordan"}
+{"id": "voice-025", "audio_path": "voices/Julian.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Julian"}
+{"id": "voice-026", "audio_path": "voices/Layla.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Layla"}
+{"id": "voice-027", "audio_path": "voices/Leonardo.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Leonardo"}
+{"id": "voice-028", "audio_path": "voices/Michael.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Michael"}
+{"id": "voice-029", "audio_path": "voices/Miles.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Miles"}
+{"id": "voice-030", "audio_path": "voices/Olivia.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Olivia"}
+{"id": "voice-031", "audio_path": "voices/Robert.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Robert"}
+{"id": "voice-032", "audio_path": "voices/Ryan.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Ryan"}
+{"id": "voice-033", "audio_path": "voices/Sarah.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Sarah"}
+{"id": "voice-034", "audio_path": "voices/Taylor.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Taylor"}
+{"id": "voice-035", "audio_path": "voices/Thomas.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Thomas"}
+{"id": "voice-036", "audio_path": "voices/WanLung.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "WanLung"}
+{"id": "voice-037", "audio_path": "voices/Xiaobei.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Xiaobei"}
+{"id": "voice-038", "audio_path": "voices/Xiaoni.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Xiaoni"}
+{"id": "voice-039", "audio_path": "voices/Xiaoxiao.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Xiaoxiao"}
+{"id": "voice-040", "audio_path": "voices/Xiaoyi.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Xiaoyi"}
+{"id": "voice-041", "audio_path": "voices/YunJhe.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "YunJhe"}
+{"id": "voice-042", "audio_path": "voices/Yunjian.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Yunjian"}
+{"id": "voice-043", "audio_path": "voices/Yunxi.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Yunxi"}
+{"id": "voice-044", "audio_path": "voices/Yunxia.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Yunxia"}
+{"id": "voice-045", "audio_path": "voices/Yunyang.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "Yunyang"}
+{"id": "voice-046", "audio_path": "voices/moss_en_clear.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "moss_en_clear"}
+{"id": "voice-047", "audio_path": "voices/moss_en_energetic.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "moss_en_energetic"}
+{"id": "voice-048", "audio_path": "voices/moss_en_news.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "moss_en_news"}
+{"id": "voice-049", "audio_path": "voices/moss_en_professional.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "moss_en_professional"}
+{"id": "voice-050", "audio_path": "voices/moss_en_soft.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "moss_en_soft"}
+{"id": "voice-051", "audio_path": "voices/moss_en_warm.wav", "language": "en", "sample_text": "Welcome to MOSS text-to-speech. This is a sample audio.", "voice_name": "moss_en_warm"}
+{"id": "voice-052", "audio_path": "voices/moss_jp_standard.wav", "language": "ja", "sample_text": "MOSSテキスト音声合成へようこそ。これはサンプル音声です。", "voice_name": "moss_jp_standard"}
+{"id": "voice-053", "audio_path": "voices/moss_zh_broadcast.wav", "language": "zh", "sample_text": "欢迎使用 MOSS 语音合成系统，这是一段示例语音。", "voice_name": "moss_zh_broadcast"}
+{"id": "voice-054", "audio_path": "voices/moss_zh_calm.wav", "language": "zh", "sample_text": "欢迎使用 MOSS 语音合成系统，这是一段示例语音。", "voice_name": "moss_zh_calm"}
+{"id": "voice-055", "audio_path": "voices/moss_zh_clear.wav", "language": "zh", "sample_text": "欢迎使用 MOSS 语音合成系统，这是一段示例语音。", "voice_name": "moss_zh_clear"}
+{"id": "voice-056", "audio_path": "voices/moss_zh_culture.wav", "language": "zh", "sample_text": "欢迎使用 MOSS 语音合成系统，这是一段示例语音。", "voice_name": "moss_zh_culture"}
+{"id": "voice-057", "audio_path": "voices/moss_zh_formal.wav", "language": "zh", "sample_text": "欢迎使用 MOSS 语音合成系统，这是一段示例语音。", "voice_name": "moss_zh_formal"}
+{"id": "voice-058", "audio_path": "voices/moss_zh_news1.wav", "language": "zh", "sample_text": "欢迎使用 MOSS 语音合成系统，这是一段示例语音。", "voice_name": "moss_zh_news1"}
