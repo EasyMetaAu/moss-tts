@@ -19,7 +19,7 @@ logger = logging.getLogger("moss-realtime")
 
 app = FastAPI(title="MOSS-TTS-Realtime API")
 
-MODEL_ID   = "OpenMOSS-Team/MOSS-TTS-Realtime"
+MODEL_ID   = os.getenv("MODEL_PATH", "/home/lukin/models/MOSS-TTS-Realtime")
 HF_HOME    = os.getenv("HF_HOME", "/hf_cache")
 VOICES_DIR = Path(os.getenv("VOICES_DIR", "/app/voices"))
 MAX_SEGMENT_CHARS = int(os.getenv("MAX_SEGMENT_CHARS", "500"))
@@ -27,20 +27,51 @@ SAMPLE_RATE = 24000
 
 os.environ["HF_HOME"] = HF_HOME
 
-logger.info(f"Loading realtime model {MODEL_ID} ...")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+dtype  = torch.bfloat16 if device == "cuda" else torch.float32
+
+if device == "cuda":
+    torch.backends.cuda.enable_cudnn_sdp(False)
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
+
+logger.info(f"Loading realtime model from {MODEL_ID} on {device} ...")
 try:
-    from transformers import AutoProcessor, AutoModelForCausalLM
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(
+    # Compatibility patches for transformers 5.0.0
+    from transformers import processing_utils
+    if not hasattr(processing_utils, 'MODALITY_TO_BASE_CLASS_MAPPING'):
+        processing_utils.MODALITY_TO_BASE_CLASS_MAPPING = {}
+
+    from transformers import AutoProcessor, AutoModel
+    processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    if hasattr(processor, 'audio_tokenizer'):
+        processor.audio_tokenizer = processor.audio_tokenizer.to(device)
+    SAMPLE_RATE = getattr(getattr(processor, 'model_config', None), 'sampling_rate', 24000)
+
+    model = AutoModel.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto",
-    )
+        trust_remote_code=True,
+        attn_implementation="sdpa" if device == "cuda" else "eager",
+        torch_dtype=dtype,
+    ).to(device)
     model.eval()
-    logger.info("Realtime model loaded.")
+
+    # Patch num_hidden_layers for DynamicCache compatibility
+    cfg = model.config
+    if not hasattr(cfg, 'num_hidden_layers'):
+        lm_cfg = getattr(cfg, 'language_config', None)
+        if lm_cfg and hasattr(lm_cfg, 'num_hidden_layers'):
+            cfg.__class__.num_hidden_layers = property(lambda self: self.language_config.num_hidden_layers)
+        elif hasattr(cfg, 'local_num_layers'):
+            cfg.__class__.num_hidden_layers = property(lambda self: self.local_num_layers)
+
+    logger.info(f"Realtime model loaded. SAMPLE_RATE={SAMPLE_RATE}")
+    MODEL_LOADED = True
 except Exception as e:
-    logger.error(f"Failed to load model: {e}")
+    logger.error(f"Failed to load model: {e}", exc_info=True)
     processor = model = None
+    MODEL_LOADED = False
 
 
 def split_text(text: str, max_chars: int = MAX_SEGMENT_CHARS) -> list[str]:
