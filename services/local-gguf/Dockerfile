@@ -59,7 +59,7 @@ ENV LD_LIBRARY_PATH=/app/lib:${LD_LIBRARY_PATH}
 
 # Python deps for hybrid e2e wrapper + FastAPI server
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /app/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
 # Server code
 COPY server.py /app/server.py
