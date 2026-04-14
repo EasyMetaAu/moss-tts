@@ -51,6 +51,9 @@ TEXT_TEMPERATURE  = float(os.getenv("TEXT_TEMPERATURE", "1.5"))
 AUDIO_TEMPERATURE = float(os.getenv("AUDIO_TEMPERATURE", "1.7"))
 SAMPLE_RATE       = int(os.getenv("SAMPLE_RATE", "24000"))  # MOSS-TTS-Delay output is 24kHz mono
 LANGUAGE_DEFAULT  = os.getenv("LANGUAGE_DEFAULT", "zh")
+# Run ONNX audio encoder/decoder on CPU (default=1: avoids cuDNN runtime requirement).
+# Set to 0 only if cuDNN 9.x is available and onnxruntime-gpu >= 1.20 is installed.
+AUDIO_DECODER_CPU = os.getenv("AUDIO_DECODER_CPU", "1") not in ("0", "false", "False")
 
 # ───── Preflight ──────────────────────────────────────────────────────────
 MISSING: list[str] = []
@@ -156,6 +159,8 @@ def run_e2e(text: str, reference_audio: Optional[Path], language: str, out_wav: 
         "--audio-temperature", str(AUDIO_TEMPERATURE),
         "--n-gpu-layers",  str(N_GPU_LAYERS),
     ]
+    if AUDIO_DECODER_CPU:
+        cmd.append("--audio-decoder-cpu")
     if reference_audio:
         cmd.extend(["--reference-audio", str(reference_audio)])
 

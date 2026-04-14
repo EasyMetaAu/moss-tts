@@ -90,12 +90,13 @@ services:
 
   # ─────────────────────────────────────────────────────────
   # Profile: local-gguf  (MOSS-TTS-Delay Q4_K_M via llama.cpp first-class + ONNX tokenizer)
-  # Target VRAM: ~5-6GB (vs ~12.7GB for `local` bf16 profile)
+  # Measured VRAM: ~5.1GB backbone on GPU (vs ~12.7GB for `local` bf16 profile)
+  # ONNX audio tokenizer runs on CPU (avoids cuDNN requirement)
   # Start: docker compose --profile local-gguf up -d --build
   # Requires:
-  #   MODEL_WEIGHTS_DIR/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_Q4_K_M.gguf
-  #   MODEL_WEIGHTS_DIR/MOSS-TTS-GGUF/tokenizer/
-  #   MODEL_WEIGHTS_DIR/MOSS-Audio-Tokenizer-ONNX/{encoder,decoder}.onnx
+  #   MODEL_WEIGHTS_DIR/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_Q4_K_M.gguf  (4.9GB)
+  #   MODEL_WEIGHTS_DIR/MOSS-TTS-GGUF/tokenizer/{tokenizer,vocab,merges}.json
+  #   MODEL_WEIGHTS_DIR/MOSS-Audio-Tokenizer-ONNX/{encoder,decoder}.{onnx,data}  (~14GB total)
   # ─────────────────────────────────────────────────────────
   moss-local-gguf:
     build:
@@ -119,6 +120,7 @@ services:
       ONNX_ENCODER: "/models/MOSS-Audio-Tokenizer-ONNX/encoder.onnx"
       ONNX_DECODER: "/models/MOSS-Audio-Tokenizer-ONNX/decoder.onnx"
       N_GPU_LAYERS: "-1"
+      AUDIO_DECODER_CPU: "1"
     deploy:
       resources:
         reservations:
