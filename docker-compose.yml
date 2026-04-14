@@ -1,0 +1,84 @@
+version: "3.9"
+
+x-common-env: &common-env
+  CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+  HF_HOME: /hf_cache
+  MAX_SEGMENT_CHARS: ${MAX_SEGMENT_CHARS:-500}
+
+services:
+  # ─────────────────────────────────────────────────────────
+  # Profile: nano  (MOSS-TTS-Nano ~0.1B, 48kHz stereo)
+  # Start with: docker compose --profile nano up -d
+  # ─────────────────────────────────────────────────────────
+  moss-nano:
+    image: moss-tts-nano:latest
+    profiles: ["nano"]
+    container_name: moss-tts-nano
+    restart: unless-stopped
+    ports:
+      - "${NANO_PORT:-6006}:18083"
+    volumes:
+      - ${VOICES_DIR:-./voices}:/app/custom_voices:ro
+    environment:
+      <<: *common-env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ─────────────────────────────────────────────────────────
+  # Profile: local  (MOSS-TTS-Local-Transformer 1.7B, 24kHz mono)
+  # Start with: docker compose --profile local up -d
+  # ─────────────────────────────────────────────────────────
+  moss-local:
+    build:
+      context: ./services/local
+      dockerfile: Dockerfile
+    profiles: ["local"]
+    container_name: moss-tts-local
+    restart: unless-stopped
+    ports:
+      - "${LOCAL_PORT:-6007}:6007"
+    volumes:
+      - ${HF_HOME:-~/.cache/huggingface}:/hf_cache:ro
+      - ${VOICES_DIR:-./voices}:/app/voices:ro
+    environment:
+      <<: *common-env
+      PORT: "6007"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ─────────────────────────────────────────────────────────
+  # Profile: realtime  (MOSS-TTS-Realtime 1.7B, low-latency)
+  # Start with: docker compose --profile realtime up -d
+  # ─────────────────────────────────────────────────────────
+  moss-realtime:
+    build:
+      context: ./services/realtime
+      dockerfile: Dockerfile
+    profiles: ["realtime"]
+    container_name: moss-tts-realtime
+    restart: unless-stopped
+    ports:
+      - "${REALTIME_PORT:-6008}:6008"
+    volumes:
+      - ${HF_HOME:-~/.cache/huggingface}:/hf_cache:ro
+      - ${VOICES_DIR:-./voices}:/app/voices:ro
+    environment:
+      <<: *common-env
+      PORT: "6008"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
