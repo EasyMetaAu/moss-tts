@@ -25,7 +25,7 @@ from typing import Optional
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 import uvicorn
 
 logging.basicConfig(
@@ -57,19 +57,20 @@ AUDIO_DECODER_CPU = os.getenv("AUDIO_DECODER_CPU", "1") not in ("0", "false", "F
 
 # ───── Preflight ──────────────────────────────────────────────────────────
 MISSING: list[str] = []
-for name, p in [
-    ("LLAMA_BIN", LLAMA_BIN),
-    ("E2E_SCRIPT", E2E_SCRIPT),
-    ("MODEL_GGUF", MODEL_GGUF),
-    ("TOKENIZER_DIR/tokenizer.json", TOKENIZER_DIR / "tokenizer.json"),
-    ("ONNX_ENCODER", ONNX_ENCODER),
-    ("ONNX_DECODER", ONNX_DECODER),
-]:
-    if not p.exists():
-        MISSING.append(f"{name}={p}")
-        logger.warning("preflight: missing %s -> %s", name, p)
-    else:
-        logger.info("preflight: %s -> %s (ok)", name, p)
+if os.getenv("MOSS_PREFLIGHT", "1") not in ("0", "false", "False"):
+    for name, p in [
+        ("LLAMA_BIN", LLAMA_BIN),
+        ("E2E_SCRIPT", E2E_SCRIPT),
+        ("MODEL_GGUF", MODEL_GGUF),
+        ("TOKENIZER_DIR/tokenizer.json", TOKENIZER_DIR / "tokenizer.json"),
+        ("ONNX_ENCODER", ONNX_ENCODER),
+        ("ONNX_DECODER", ONNX_DECODER),
+    ]:
+        if not p.exists():
+            MISSING.append(f"{name}={p}")
+            logger.warning("preflight: missing %s -> %s", name, p)
+        else:
+            logger.info("preflight: %s -> %s (ok)", name, p)
 
 READY = len(MISSING) == 0
 if not READY:
@@ -94,12 +95,13 @@ def split_text(text: str, max_chars: int = MAX_SEGMENT_CHARS) -> list[str]:
         else:
             if buf:
                 segments.append(buf.strip())
+                buf = ""
             if len(sentence) > max_chars:
                 for chunk in re.split(r"(?<=[，,、；;])\s*", sentence):
                     if not chunk.strip():
                         continue
                     if len(buf) + len(chunk) <= max_chars:
-                        buf = chunk
+                        buf += chunk
                     else:
                         if buf:
                             segments.append(buf.strip())
@@ -203,7 +205,7 @@ def generate_speech(text: str, reference_audio: Optional[Path], language: Option
 # ───── Routes ─────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {
+    payload = {
         "status":       "ok" if READY else "degraded",
         "ready":        READY,
         "missing":      MISSING,
@@ -215,6 +217,9 @@ def health():
         "sample_rate":  SAMPLE_RATE,
         "n_gpu_layers": N_GPU_LAYERS,
     }
+    if not READY:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.post("/api/generate")
