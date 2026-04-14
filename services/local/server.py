@@ -60,6 +60,19 @@ try:
         torch_dtype=dtype,
     ).to(device)
     model.eval()
+
+    # Patch MossTTSDelayConfig to expose num_hidden_layers (required by transformers 5.x DynamicCache)
+    # The local transformer layers count is in model.config.local_num_layers
+    cfg = model.config
+    if not hasattr(cfg, 'num_hidden_layers'):
+        # Use language model's num_hidden_layers as fallback for cache init
+        lm_cfg = getattr(cfg, 'language_config', None)
+        if lm_cfg and hasattr(lm_cfg, 'num_hidden_layers'):
+            cfg.__class__.num_hidden_layers = property(lambda self: self.language_config.num_hidden_layers)
+        elif hasattr(cfg, 'local_num_layers'):
+            cfg.__class__.num_hidden_layers = property(lambda self: self.local_num_layers)
+        logger.info(f"Patched num_hidden_layers = {cfg.num_hidden_layers}")
+
     logger.info(f"Model loaded. SAMPLE_RATE={SAMPLE_RATE}")
     MODEL_LOADED = True
 except Exception as e:
