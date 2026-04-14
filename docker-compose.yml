@@ -8,7 +8,7 @@ x-common-env: &common-env
 services:
   # ─────────────────────────────────────────────────────────
   # Profile: nano  (MOSS-TTS-Nano ~0.1B, 48kHz stereo)
-  # Start with: docker compose --profile nano up -d
+  # Start: docker compose --profile nano up -d
   # ─────────────────────────────────────────────────────────
   moss-nano:
     image: moss-tts-nano:latest
@@ -30,8 +30,9 @@ services:
               capabilities: [gpu]
 
   # ─────────────────────────────────────────────────────────
-  # Profile: local  (MOSS-TTS-Local-Transformer 1.7B, 24kHz mono)
-  # Start with: docker compose --profile local up -d
+  # Profile: local  (MOSS-TTS-Local-Transformer 1.7B, 24kHz)
+  # Start: docker compose --profile local up -d --build
+  # Requires: MODEL_WEIGHTS_DIR pointing to downloaded weights
   # ─────────────────────────────────────────────────────────
   moss-local:
     build:
@@ -45,9 +46,11 @@ services:
     volumes:
       - ${HF_HOME:-~/.cache/huggingface}:/hf_cache:ro
       - ${VOICES_DIR:-./voices}:/app/voices:ro
+      - ${MODEL_WEIGHTS_DIR:-/home/lukin/models}:/models:ro
     environment:
       <<: *common-env
       PORT: "6007"
+      MODEL_PATH: "/models/MOSS-TTS-Local-Transformer"
     deploy:
       resources:
         reservations:
@@ -58,7 +61,7 @@ services:
 
   # ─────────────────────────────────────────────────────────
   # Profile: realtime  (MOSS-TTS-Realtime 1.7B, low-latency)
-  # Start with: docker compose --profile realtime up -d
+  # Start: docker compose --profile realtime up -d --build
   # ─────────────────────────────────────────────────────────
   moss-realtime:
     build:
@@ -72,9 +75,11 @@ services:
     volumes:
       - ${HF_HOME:-~/.cache/huggingface}:/hf_cache:ro
       - ${VOICES_DIR:-./voices}:/app/voices:ro
+      - ${MODEL_WEIGHTS_DIR:-/home/lukin/models}:/models:ro
     environment:
       <<: *common-env
       PORT: "6008"
+      MODEL_PATH: "/models/MOSS-TTS-Realtime"
     deploy:
       resources:
         reservations:
