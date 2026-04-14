@@ -1,14 +1,17 @@
 """
 MOSS-TTS-Local-Transformer (1.7B) API Server
 Compatible with MOSS-TTS-Nano /api/generate interface
+
+Uses the official MOSS-TTS processor.build_user_message() API with trust_remote_code=True
 """
-import os, re, io, logging, tempfile
+import os, re, io, logging, json, tempfile
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-import soundfile as sf
 import torch
+import torchaudio
+import soundfile as sf
+import numpy as np
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.responses import Response
 import uvicorn
@@ -18,40 +21,55 @@ logger = logging.getLogger("moss-local")
 
 app = FastAPI(title="MOSS-TTS-Local-Transformer API")
 
-# ───── Model loading ─────────────────────────────────────────────────────────
-MODEL_ID = "OpenMOSS-Team/MOSS-TTS-Local-Transformer"
-HF_HOME  = os.getenv("HF_HOME", "/hf_cache")
-VOICES_DIR = Path(os.getenv("VOICES_DIR", "/app/voices"))
+# ───── Config ──────────────────────────────────────────────────────────────
+MODEL_PATH  = os.getenv("MODEL_PATH", "/home/lukin/models/MOSS-TTS-Local-Transformer")
+VOICES_DIR  = Path(os.getenv("VOICES_DIR", "/app/voices"))
 MAX_SEGMENT_CHARS = int(os.getenv("MAX_SEGMENT_CHARS", "500"))
-
+HF_HOME    = os.getenv("HF_HOME", "/hf_cache")
 os.environ["HF_HOME"] = HF_HOME
 
-logger.info(f"Loading model {MODEL_ID} from {HF_HOME}...")
+# ───── Model loading ──────────────────────────────────────────────────────
+logger.info(f"Loading model from {MODEL_PATH} ...")
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+dtype  = torch.bfloat16 if device == "cuda" else torch.float32
+logger.info(f"Device: {device}, dtype: {dtype}")
+
+# Fix cuDNN SDPA backend (broken on some setups)
+if device == "cuda":
+    torch.backends.cuda.enable_cudnn_sdp(False)
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
+
 try:
-    from transformers import AutoProcessor, AutoModelForCausalLM
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto",
-    )
+    from transformers import AutoModel, AutoProcessor
+    processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    processor.audio_tokenizer = processor.audio_tokenizer.to(device)
+    SAMPLE_RATE = processor.model_config.sampling_rate
+    
+    model = AutoModel.from_pretrained(
+        MODEL_PATH,
+        trust_remote_code=True,
+        attn_implementation="sdpa" if device == "cuda" else "eager",
+        torch_dtype=dtype,
+    ).to(device)
     model.eval()
-    SAMPLE_RATE = 24000
-    logger.info(f"Model loaded. CUDA: {torch.cuda.is_available()}")
+    logger.info(f"Model loaded. SAMPLE_RATE={SAMPLE_RATE}")
+    MODEL_LOADED = True
 except Exception as e:
-    logger.error(f"Failed to load model: {e}")
+    logger.error(f"Failed to load model: {e}", exc_info=True)
     processor = model = None
     SAMPLE_RATE = 24000
+    MODEL_LOADED = False
 
 
-# ───── Helpers ───────────────────────────────────────────────────────────────
+# ───── Helpers ─────────────────────────────────────────────────────────────
 def split_text(text: str, max_chars: int = MAX_SEGMENT_CHARS) -> list[str]:
-    """Split text at sentence boundaries to avoid exceeding model context."""
+    """Split text at sentence boundaries."""
     if len(text) <= max_chars:
         return [text]
-    
     segments, buf = [], ""
-    # Split on Chinese/English sentence terminators
     for sentence in re.split(r'(?<=[。！？.!?])\s*', text):
         if not sentence.strip():
             continue
@@ -60,7 +78,7 @@ def split_text(text: str, max_chars: int = MAX_SEGMENT_CHARS) -> list[str]:
         else:
             if buf:
                 segments.append(buf.strip())
-            # If single sentence > max_chars, split on comma
+            # Long single sentence: split on comma
             if len(sentence) > max_chars:
                 for chunk in re.split(r'(?<=[，,、；;])\s*', sentence):
                     if chunk.strip():
@@ -77,83 +95,78 @@ def split_text(text: str, max_chars: int = MAX_SEGMENT_CHARS) -> list[str]:
     return segments or [text]
 
 
-def load_voice_audio(voice_name: Optional[str]) -> Optional[np.ndarray]:
-    """Load reference audio from voices directory."""
-    if not voice_name:
-        return None
-    
-    for ext in [".wav", ".mp3", ".flac"]:
-        path = VOICES_DIR / f"{voice_name}{ext}"
-        if path.exists():
-            audio, sr = sf.read(str(path))
-            if sr != SAMPLE_RATE:
-                import scipy.signal as sig
-                samples = int(len(audio) * SAMPLE_RATE / sr)
-                audio = sig.resample(audio, samples)
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            return audio
+def find_voice_file(voice_name: str) -> Optional[Path]:
+    """Find a voice WAV file by name."""
+    for ext in [".wav", ".flac"]:
+        p = VOICES_DIR / f"{voice_name}{ext}"
+        if p.exists():
+            return p
     return None
 
 
 @torch.inference_mode()
-def generate_segment(text: str, prompt_audio: Optional[np.ndarray] = None) -> np.ndarray:
-    """Generate audio for a single text segment."""
-    if model is None:
+def generate_segment(text: str, ref_audio_path: Optional[str] = None) -> np.ndarray:
+    """Generate audio for a single text segment using the MOSS Local-Transformer API."""
+    if model is None or processor is None:
         raise RuntimeError("Model not loaded")
     
-    inputs = processor(text=text, return_tensors="pt")
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    
-    if prompt_audio is not None:
-        audio_inputs = processor(audio=prompt_audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
-        inputs.update({k: v.to(model.device) for k, v in audio_inputs.items()})
-    
-    output = model.generate(**inputs, max_new_tokens=2048)
-    
-    # Decode audio tokens → waveform
-    if hasattr(processor, "decode_audio"):
-        wav = processor.decode_audio(output)
+    if ref_audio_path:
+        conversation = [processor.build_user_message(text=text, reference=[ref_audio_path])]
     else:
-        # Fallback: assume output contains audio codes
-        wav = output[0].float().cpu().numpy()
+        conversation = [processor.build_user_message(text=text)]
     
-    return wav
+    batch = processor(conversation, mode="generation")
+    input_ids       = batch["input_ids"].to(device)
+    attention_mask  = batch["attention_mask"].to(device)
+    
+    outputs = model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        max_new_tokens=4096,
+    )
+    
+    decoded = processor.decode(outputs)
+    audio_tensor = decoded[0].audio_codes_list[0]  # shape: [C, T] or [T]
+    
+    # Convert to numpy mono
+    wav = audio_tensor.float().cpu()
+    if wav.dim() > 1:
+        wav = wav.mean(0)
+    return wav.numpy()
 
 
-def generate_speech(text: str, voice_name: Optional[str] = None,
-                    prompt_audio_bytes: Optional[bytes] = None) -> bytes:
-    """Generate full speech, with text segmentation for long texts."""
-    prompt_audio = None
-    if prompt_audio_bytes:
-        with io.BytesIO(prompt_audio_bytes) as bio:
-            prompt_audio, _ = sf.read(bio)
-    elif voice_name:
-        prompt_audio = load_voice_audio(voice_name)
-    
+def generate_speech(text: str, ref_audio_path: Optional[str] = None) -> bytes:
+    """Full speech generation with text segmentation."""
     segments = split_text(text)
-    logger.info(f"Generating {len(segments)} segment(s) for text length {len(text)}")
+    logger.info(f"Generating {len(segments)} segment(s) for {len(text)} chars")
     
     parts = []
     for i, seg in enumerate(segments):
-        logger.info(f"  Segment {i+1}/{len(segments)}: {seg[:50]}...")
-        wav = generate_segment(seg, prompt_audio)
+        logger.info(f"  Segment {i+1}/{len(segments)}: {seg[:60]}")
+        wav = generate_segment(seg, ref_audio_path=ref_audio_path)
         parts.append(wav)
-        # Use first segment output as prompt for next (voice consistency)
-        if prompt_audio is None and len(parts) == 1:
-            prompt_audio = wav[:SAMPLE_RATE * 3] if len(wav) > SAMPLE_RATE * 3 else wav
+        # After first segment, use its output as ref for voice consistency
+        if ref_audio_path is None and i == 0 and len(segments) > 1:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                sf.write(tmp.name, wav, SAMPLE_RATE, subtype="PCM_16")
+                ref_audio_path = tmp.name
     
     full_audio = np.concatenate(parts) if len(parts) > 1 else parts[0]
-    
     buf = io.BytesIO()
     sf.write(buf, full_audio, SAMPLE_RATE, format="WAV", subtype="PCM_16")
     return buf.getvalue()
 
 
-# ───── Routes ─────────────────────────────────────────────────────────────────
+# ───── Routes ─────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_ID, "loaded": model is not None}
+    return {
+        "status": "ok",
+        "model": MODEL_PATH,
+        "loaded": MODEL_LOADED,
+        "device": device,
+        "sample_rate": SAMPLE_RATE,
+    }
 
 
 @app.post("/api/generate")
@@ -166,26 +179,34 @@ async def api_generate(
     """Generate speech — compatible with MOSS-TTS-Nano /api/generate interface."""
     if not text.strip():
         raise HTTPException(400, "text is required")
+    if not MODEL_LOADED:
+        raise HTTPException(503, "Model not loaded")
     
-    # Resolve voice_name from demo_id (e.g. "demo-5" → look up voices/demo.jsonl)
-    voice_name: Optional[str] = None
-    if demo_id:
+    # Resolve voice from demo_id
+    ref_audio_path: Optional[str] = None
+    if prompt_audio:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(await prompt_audio.read())
+            ref_audio_path = tmp.name
+    elif demo_id:
         jsonl_path = VOICES_DIR / "demo.jsonl"
+        voice_name = None
         if jsonl_path.exists():
-            import json
             for line in jsonl_path.read_text().splitlines():
                 entry = json.loads(line)
                 if entry.get("demo_id") == demo_id:
-                    voice_name = Path(entry.get("audio_path", "")).stem
+                    voice_name = entry.get("voice_name")
                     break
-    
-    prompt_bytes = await prompt_audio.read() if prompt_audio else None
+        if voice_name:
+            vf = find_voice_file(voice_name)
+            if vf:
+                ref_audio_path = str(vf)
     
     try:
-        wav_bytes = generate_speech(text, voice_name=voice_name, prompt_audio_bytes=prompt_bytes)
+        wav_bytes = generate_speech(text, ref_audio_path=ref_audio_path)
         return Response(content=wav_bytes, media_type="audio/wav")
     except Exception as e:
-        logger.error(f"Generation error: {e}")
+        logger.error(f"Generation error: {e}", exc_info=True)
         raise HTTPException(500, str(e))
 
 
