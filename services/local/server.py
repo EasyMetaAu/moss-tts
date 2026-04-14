@@ -43,6 +43,11 @@ if device == "cuda":
     torch.backends.cuda.enable_math_sdp(True)
 
 try:
+    # Compatibility patch: MODALITY_TO_BASE_CLASS_MAPPING was added in transformers >4.57
+    from transformers import processing_utils
+    if not hasattr(processing_utils, 'MODALITY_TO_BASE_CLASS_MAPPING'):
+        processing_utils.MODALITY_TO_BASE_CLASS_MAPPING = {}
+
     from transformers import AutoModel, AutoProcessor
     processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
     processor.audio_tokenizer = processor.audio_tokenizer.to(device)
