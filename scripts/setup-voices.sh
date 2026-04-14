@@ -54,8 +54,8 @@ else
     echo "  ⚠️  Container $CONTAINER not running — skipping MOSS voices extraction"
 fi
 
-# ── Generate demo.jsonl ──────────────────────────────────────────────────
-python3 "$SCRIPT_DIR/gen-demo-jsonl.py" "$VOICES_DIR"
+# ── Generate voices.jsonl ────────────────────────────────────────────────
+python3 "$SCRIPT_DIR/gen-voices-jsonl.py" "$VOICES_DIR"
 echo ""
 echo "✅ Voice setup complete. Files in $VOICES_DIR:"
 ls "$VOICES_DIR"/*.wav 2>/dev/null | wc -l | xargs -I{} echo "  {} WAV files"
