@@ -25,6 +25,7 @@ RUN git clone --depth 1 --branch ${LLAMA_CPP_BRANCH} \
 RUN cd llama.cpp \
     && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \
              -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
+             -DGGML_CUDA_VMM=OFF \
     && cmake --build build --target llama-moss-tts -j$(nproc)
 
 # ─────────────────────────────────────────────
