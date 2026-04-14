@@ -1,6 +1,5 @@
 FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
-# System dependencies
 RUN apt-get update && apt-get install -y \
     python3 python3-pip python3-dev \
     libsndfile1 ffmpeg git \
@@ -8,11 +7,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install Python dependencies
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy server code
 COPY server.py .
+
+ENV MODEL_PATH=/models/MOSS-TTS-Local-Transformer
+ENV VOICES_DIR=/app/voices
+ENV HF_HOME=/hf_cache
+ENV PORT=6007
 
 CMD ["python3", "server.py"]
