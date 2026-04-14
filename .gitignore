@@ -1,0 +1,10 @@
+.env
+voices/*.wav
+voices/*.mp3
+voices/*.flac
+voices/demo.jsonl
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+.DS_Store
