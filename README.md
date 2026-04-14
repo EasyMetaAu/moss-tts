@@ -2,11 +2,12 @@
 
 Multi-model MOSS-TTS deployment with Docker Compose — three model sizes, one unified API.
 
-| Profile | Model | Parameters | Sample Rate | Best For |
-|---------|-------|-----------|-------------|----------|
-| `nano` | MOSS-TTS-Nano | ~0.1B | 48kHz stereo | Low-latency, real-time |
-| `local` | MOSS-TTS-Local-Transformer | 1.7B | 24kHz mono | High-quality article TTS |
-| `realtime` | MOSS-TTS-Realtime | 1.7B | 24kHz mono | Multi-turn dialogue |
+| Profile | Model | Parameters | Sample Rate | VRAM | Best For |
+|---------|-------|-----------|-------------|------|----------|
+| `nano` | MOSS-TTS-Nano | ~0.1B | 48kHz stereo | ~2GB | Low-latency, real-time |
+| `local` | MOSS-TTS-Local-Transformer | 1.7B (3B w/ audio tokenizer) | 24kHz mono | ~13GB (bf16) | High-quality article TTS, max fidelity |
+| `local-gguf` | MOSS-TTS-Delay (Q4_K_M) | 8.5B Delay model | 24kHz mono | **~5.1GB** backbone (ONNX on CPU) | High-quality article TTS, memory-constrained GPUs |
+| `realtime` | MOSS-TTS-Realtime | 1.7B | 24kHz mono | ~13GB | Multi-turn dialogue |
 
 All services expose a unified `/api/generate` API compatible with the official MOSS-TTS-Nano interface.
 
@@ -67,6 +68,85 @@ docker compose --profile realtime up -d --build
 # Multiple at once
 docker compose --profile nano --profile local up -d
 ```
+
+### 6. `local-gguf` profile: memory-optimized variant
+
+The `local-gguf` profile runs MOSS-TTS-Delay via [OpenMOSS/llama.cpp first-class pipeline](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md) (Qwen3 backbone as GGUF + ONNX audio tokenizer). Same `/api/generate` contract as `local`, but ~60% smaller VRAM footprint.
+
+**Weights needed** (place under `MODEL_WEIGHTS_DIR`):
+
+```
+MODEL_WEIGHTS_DIR/
+├── MOSS-TTS-GGUF/
+│   ├── first_class/
+│   │   └── MOSS_TTS_FIRST_CLASS_Q4_K_M.gguf   # 4.9GB — convert from source (see below)
+│   └── tokenizer/
+│       ├── tokenizer.json
+│       ├── tokenizer_config.json
+│       ├── vocab.json
+│       ├── merges.txt
+│       └── added_tokens.json
+└── MOSS-Audio-Tokenizer-ONNX/
+    ├── encoder.onnx   # 1.5MB
+    ├── encoder.data   # 6.7GB — must be present (ONNX external weights)
+    ├── decoder.onnx   # 14MB
+    └── decoder.data   # 6.7GB — must be present (ONNX external weights)
+```
+
+> **Total storage:** ~19GB for weights (GGUF 4.9GB + ONNX 13.4GB + tokenizer files).
+> **VRAM:** ~5.1GB backbone on GPU; ONNX encoder/decoder run on CPU (no cuDNN needed).
+
+**Conversion from source (MOSS-TTS-GGUF is gated; convert from public MOSS-TTS instead):**
+
+```bash
+# 1. Download MOSS-TTS source (public) + ONNX tokenizer
+cd ~/models
+HF_ENDPOINT=https://hf-mirror.com hf download OpenMOSS-Team/MOSS-TTS \
+  --local-dir MOSS-TTS-hf
+HF_ENDPOINT=https://hf-mirror.com hf download OpenMOSS-Team/MOSS-Audio-Tokenizer-ONNX \
+  --local-dir MOSS-Audio-Tokenizer-ONNX
+
+# 2. Clone OpenMOSS/llama.cpp moss-tts-firstclass branch and build
+git clone --depth 1 --branch moss-tts-firstclass \
+  https://github.com/OpenMOSS/llama.cpp.git
+cd llama.cpp
+cmake -S . -B build-cuda -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="86" \
+  && cmake --build build-cuda --target llama-moss-tts -j$(nproc)
+
+# 3. Convert HF weights → F16 GGUF → Q4_K_M
+pip install sentencepiece transformers
+python convert_hf_to_gguf.py ~/models/MOSS-TTS-hf \
+  --outfile ~/models/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_F16.gguf \
+  --outtype f16
+./build-cuda/bin/llama-quantize \
+  ~/models/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_F16.gguf \
+  ~/models/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_Q4_K_M.gguf Q4_K_M
+rm ~/models/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_F16.gguf  # save disk space
+
+# 4. Copy tokenizer files
+mkdir -p ~/models/MOSS-TTS-GGUF/tokenizer
+cp ~/models/MOSS-TTS-hf/{tokenizer.json,tokenizer_config.json,vocab.json,merges.txt,added_tokens.json} \
+   ~/models/MOSS-TTS-GGUF/tokenizer/
+```
+
+**Build & run:**
+
+```bash
+# First build is slow (~30-60 min on 1x 3090): compiles llama.cpp CUDA
+docker compose --profile local-gguf up -d --build
+
+# Smoke test
+curl -X POST http://localhost:6009/api/generate \
+  -F "text=你好，世界" \
+  --output out.wav
+```
+
+**Tradeoffs vs `local`:**
+
+- ✅ VRAM: **~5.1GB** backbone on GPU vs ~13GB bf16 (measured on RTX 3090)
+- ✅ No pytorch in runtime image (smaller image)
+- ⚠️ First-token latency: ~5-10s (subprocess cold-load per request). Acceptable for batch article TTS; not suited for interactive use.
+- ⚠️ Q4_K_M quantization; subjective quality delta vs bf16 reported by OpenMOSS as minimal for Chinese/English.
 
 ## API
 
