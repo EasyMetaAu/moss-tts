@@ -5,20 +5,20 @@ Compatible with MOSS-TTS-Nano /api/generate interface.
 Path: llama.cpp first-class pipeline (Qwen3 backbone GGUF + ONNX audio tokenizer).
 VRAM target: ~5-6GB vs ~12.7GB for the transformers bf16 variant.
 
-Note v1: each request spawns `tools/tts/moss-tts-firstclass-e2e.py` as a subprocess.
-The llama-moss-tts binary cold-loads the GGUF per invocation, so first-token latency
-is ~5-10s. Throughput is adequate for batch article TTS; future work will move to
-a persistent inference loop via llama-cpp-python once the MOSS-specific kernels
-are upstreamed.
+v2: Daemon mode – GGUF stays resident in GPU VRAM; requests communicate
+via stdin/stdout JSON with the persistent llama-moss-tts --daemon-mode process.
+Fallback to subprocess-per-request (v1) if daemon fails.
 """
 import io
 import json
 import logging
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -55,6 +55,11 @@ LANGUAGE_DEFAULT  = os.getenv("LANGUAGE_DEFAULT", "zh")
 # Set to 0 only if cuDNN 9.x is available and onnxruntime-gpu >= 1.20 is installed.
 AUDIO_DECODER_CPU = os.getenv("AUDIO_DECODER_CPU", "1") not in ("0", "false", "False")
 
+# Add tools/tts to sys.path so we can import moss_tts_processor / moss_tts_onnx
+_tts_tools_dir = str(APP_ROOT / "tools/tts")
+if _tts_tools_dir not in sys.path:
+    sys.path.insert(0, _tts_tools_dir)
+
 # ───── Preflight ──────────────────────────────────────────────────────────
 MISSING: list[str] = []
 if os.getenv("MOSS_PREFLIGHT", "1") not in ("0", "false", "False"):
@@ -75,6 +80,111 @@ if os.getenv("MOSS_PREFLIGHT", "1") not in ("0", "false", "False"):
 READY = len(MISSING) == 0
 if not READY:
     logger.error("preflight FAILED; /api/generate will 503 until weights are mounted")
+
+
+# ───── MossDaemon: persistent llama-moss-tts process ─────────────────────
+class MossDaemon:
+    """Persistent llama-moss-tts daemon: loads GGUF once, serves requests via stdin/stdout."""
+
+    def __init__(self):
+        self._proc: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+        self._start()
+
+    def _start(self):
+        cmd = [
+            str(LLAMA_BIN), "--daemon-mode",
+            "-m", str(MODEL_GGUF),
+            "-ngl", str(N_GPU_LAYERS),
+            "--max-new-tokens", str(MAX_NEW_TOKENS),
+            "--text-temperature", str(TEXT_TEMPERATURE),
+            "--audio-temperature", str(AUDIO_TEMPERATURE),
+        ]
+        logger.info("starting moss daemon: %s", " ".join(cmd))
+        self._proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True, bufsize=1,
+        )
+        # Wait for ready signal (reads one JSON line from stdout)
+        ready_line = self._proc.stdout.readline().strip()
+        if '"ready"' not in ready_line:
+            stderr_peek = ""
+            try:
+                stderr_peek = self._proc.stderr.read(2000)
+            except Exception:
+                pass
+            raise RuntimeError(f"daemon did not send ready signal; got: {ready_line!r}; stderr: {stderr_peek[:500]}")
+        logger.info("moss daemon ready (pid=%d)", self._proc.pid)
+
+    def _ensure_alive(self):
+        if self._proc is None or self._proc.poll() is not None:
+            logger.warning("moss daemon died (rc=%s), restarting",
+                           self._proc.poll() if self._proc else "?")
+            self._start()
+
+    def generate_codes(
+        self,
+        ref_path: Path,
+        codes_path: Path,
+        text_temperature: float = TEXT_TEMPERATURE,
+        audio_temperature: float = AUDIO_TEMPERATURE,
+        seed: int = 0,
+    ) -> dict:
+        req = json.dumps({
+            "ref_path": str(ref_path),
+            "codes_path": str(codes_path),
+            "max_new_tokens": MAX_NEW_TOKENS,
+            "text_temperature": text_temperature,
+            "audio_temperature": audio_temperature,
+            "seed": seed,
+        })
+        with self._lock:
+            self._ensure_alive()
+            self._proc.stdin.write(req + "\n")
+            self._proc.stdin.flush()
+            resp_line = self._proc.stdout.readline().strip()
+        if not resp_line:
+            raise RuntimeError("daemon returned empty response (may have crashed)")
+        return json.loads(resp_line)
+
+    def is_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+
+# ───── Lazy singletons for daemon / tokenizer / onnx ─────────────────────
+_tokenizer = None
+_onnx_tok = None
+_daemon: Optional[MossDaemon] = None
+
+REF_MAGIC   = 0x4652474D  # "MGRF"
+REF_VERSION = 1
+
+def _get_tokenizer():
+    global _tokenizer
+    if _tokenizer is None:
+        from moss_tts_processor import Tokenizer
+        _tokenizer = Tokenizer(str(TOKENIZER_DIR))
+    return _tokenizer
+
+def _get_onnx_tok():
+    global _onnx_tok
+    if _onnx_tok is None:
+        from moss_tts_onnx import OnnxAudioTokenizer
+        _onnx_tok = OnnxAudioTokenizer(
+            encoder_path=str(ONNX_ENCODER),
+            decoder_path=str(ONNX_DECODER),
+            use_gpu=not AUDIO_DECODER_CPU,
+        )
+    return _onnx_tok
+
+def _get_daemon() -> MossDaemon:
+    global _daemon
+    if _daemon is None:
+        _daemon = MossDaemon()
+    return _daemon
 
 
 # ───── Helpers ─────────────────────────────────────────────────────────────
@@ -143,6 +253,79 @@ def resolve_voice(demo_id: Optional[str]) -> Optional[Path]:
     return None
 
 
+# ───── Audio decode helper (codes.bin → wav) ─────────────────────────────
+def _decode_codes_to_wav(codes_path: Path, n_vq: int, out_wav: Path) -> None:
+    """Decode raw audio codes to wav using the moss-tts-audio-decode.py script."""
+    decode_script = APP_ROOT / "tools/tts/moss-tts-audio-decode.py"
+    cmd = [
+        sys.executable, str(decode_script),
+        "--codes-bin", str(codes_path),
+        "--wav-out", str(out_wav),
+        "--encoder-onnx", str(ONNX_ENCODER),
+        "--decoder-onnx", str(ONNX_DECODER),
+    ]
+    if AUDIO_DECODER_CPU:
+        cmd.append("--cpu")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not out_wav.is_file():
+        raise RuntimeError(f"audio decode failed rc={proc.returncode}: {proc.stderr[-400:]}")
+
+
+# ───── Daemon-based e2e generation ────────────────────────────────────────
+def run_e2e_daemon(text: str, reference_audio: Optional[Path], language: str, out_wav: Path) -> None:
+    """Build gen ref in-process, call persistent daemon for inference, decode in-process."""
+    from moss_tts_processor import build_generation_prompt, AUDIO_PAD_CODE
+
+    tok = _get_tokenizer()
+
+    # 1. Process reference audio (if any)
+    ref_codes = None
+    if reference_audio:
+        wav_data, sr = sf.read(str(reference_audio), dtype="float32")
+        if wav_data.ndim > 1:
+            wav_data = wav_data.mean(axis=1)
+        if sr != 24000:
+            raise RuntimeError(f"reference audio must be 24kHz, got {sr}")
+        onnx_tok = _get_onnx_tok()
+        ref_codes = np.asarray(onnx_tok.encode(wav_data), dtype=np.int64)
+
+    # 2. Build generation prompt tokens
+    input_ids = build_generation_prompt(
+        tokenizer=tok, text=text,
+        reference_codes=ref_codes, language=language,
+    )
+
+    # 3. Write .ref.bin
+    with tempfile.NamedTemporaryFile(suffix=".ref.bin", delete=False) as ref_f:
+        ref_path = Path(ref_f.name)
+    try:
+        prompt_frames = int(input_ids.shape[0])
+        n_vq = int(input_ids.shape[1] - 1)  # first column is text token
+        ref_path.write_bytes(
+            struct.pack("<IIIIIII",
+                REF_MAGIC, REF_VERSION,
+                prompt_frames, n_vq, int(AUDIO_PAD_CODE),
+                prompt_frames, 0)
+            + input_ids.astype(np.int32).tobytes(order="C")
+        )
+
+        # 4. Call daemon to generate raw codes
+        with tempfile.NamedTemporaryFile(suffix=".codes.bin", delete=False) as codes_f:
+            codes_path = Path(codes_f.name)
+        try:
+            resp = _get_daemon().generate_codes(ref_path, codes_path)
+            if resp.get("status") != "ok":
+                raise RuntimeError(f"daemon error: {resp.get('message', resp)}")
+
+            # 5. Decode codes → WAV via ONNX decoder script
+            _decode_codes_to_wav(codes_path, n_vq, out_wav)
+        finally:
+            codes_path.unlink(missing_ok=True)
+    finally:
+        ref_path.unlink(missing_ok=True)
+
+
+# ───── Legacy subprocess-per-request e2e ──────────────────────────────────
 def run_e2e(text: str, reference_audio: Optional[Path], language: str, out_wav: Path) -> None:
     """Invoke the official hybrid e2e script once; produces a wav file."""
     cmd = [
@@ -187,7 +370,15 @@ def generate_speech(text: str, reference_audio: Optional[Path], language: Option
         tmp = Path(tmpdir)
         for i, seg in enumerate(segments):
             out_wav = tmp / f"seg_{i:03d}.wav"
-            run_e2e(seg, current_ref, lang, out_wav)
+
+            # Prefer daemon mode; fallback to legacy subprocess
+            try:
+                run_e2e_daemon(seg, current_ref, lang, out_wav)
+                logger.info("daemon ok: seg=%d/%d len=%d", i + 1, len(segments), len(seg))
+            except Exception as daemon_err:
+                logger.warning("daemon failed for seg %d, falling back to subprocess: %s", i, daemon_err)
+                run_e2e(seg, current_ref, lang, out_wav)
+
             wav, sr = sf.read(out_wav, dtype="float32", always_2d=False)
             if wav.ndim > 1:
                 wav = wav.mean(axis=1)
@@ -205,9 +396,15 @@ def generate_speech(text: str, reference_audio: Optional[Path], language: Option
 # ───── Routes ─────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
+    daemon_alive = False
+    try:
+        daemon_alive = _daemon is not None and _daemon.is_alive()
+    except Exception:
+        pass
     payload = {
         "status":       "ok" if READY else "degraded",
         "ready":        READY,
+        "daemon_alive": daemon_alive,
         "missing":      MISSING,
         "model_gguf":   str(MODEL_GGUF),
         "tokenizer":    str(TOKENIZER_DIR),
@@ -259,6 +456,17 @@ async def api_generate(
                 os.unlink(tmp_ref.name)
             except OSError:
                 pass
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Eagerly start the daemon on server boot so model is loaded before first request."""
+    if READY:
+        try:
+            _get_daemon()
+            logger.info("daemon pre-started on server boot")
+        except Exception as e:
+            logger.warning("failed to pre-start daemon: %s (will retry on first request)", e)
 
 
 if __name__ == "__main__":
