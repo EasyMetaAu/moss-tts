@@ -2356,8 +2356,44 @@ static void run_daemon_mode(
     const moss_delay_config model_cfg = moss_delay_config_from_model(model);
     const llama_vocab * vocab = llama_model_get_vocab(model);
     const int32_t text_vocab_size = llama_vocab_n_tokens(vocab);
+    auto env_i32 = [](const char * name, int32_t fallback) {
+        const char * raw = std::getenv(name);
+        if (raw == nullptr || raw[0] == '\0') {
+            return fallback;
+        }
+        try {
+            return std::max<int32_t>(std::stoi(raw), 1);
+        } catch (const std::exception &) {
+            std::cerr << "moss-daemon: ignoring invalid " << name << "=" << raw << std::endl;
+            return fallback;
+        }
+    };
+    auto make_context = [&](uint32_t n_ctx, uint32_t n_batch) {
+        llama_context_params cparams = llama_context_default_params();
+        cparams.n_ctx = std::max<uint32_t>(n_ctx, 64u);
+        cparams.n_batch = std::max<uint32_t>(n_batch, 1u);
+        cparams.n_ubatch = cparams.n_batch;
+        cparams.n_seq_max = 1;
+        cparams.embeddings = false;
+
+        llama_context_ptr ctx(llama_init_from_model(model, cparams));
+        if (!ctx) {
+            throw std::runtime_error("failed to create context");
+        }
+        llama_set_causal_attn(ctx.get(), true);
+        llama_set_embeddings(ctx.get(), false);
+        return ctx;
+    };
+
+    const uint32_t daemon_n_ctx = (uint32_t) env_i32(
+        "MOSS_DAEMON_N_CTX",
+        std::max<int32_t>(default_max_new_tokens + 2048, 4096));
+    const uint32_t daemon_n_batch = (uint32_t) env_i32("MOSS_DAEMON_N_BATCH", 2048);
+    llama_context_ptr daemon_ctx = make_context(daemon_n_ctx, daemon_n_batch);
 
     std::string line;
+    std::cerr << "moss-daemon: daemon_ctx n_ctx=" << daemon_n_ctx
+              << " n_batch=" << daemon_n_batch << std::endl;
     std::cerr << "moss-daemon: ready" << std::endl;
     std::cout << "{\"status\":\"ready\"}" << std::endl;
     std::cout.flush();
@@ -2394,24 +2430,34 @@ static void run_daemon_mode(
             moss_read_exact(in, prompt_packed.data(), prompt_packed.size(), "packed ids");
             moss_read_exact(in, ignored_raw.data(), ignored_raw.size(), "ref raw codes");
 
-            // Create context (lightweight, does not reload model weights)
-            llama_context_params cparams = llama_context_default_params();
-            cparams.n_ctx   = std::max<uint32_t>((uint32_t) hdr.prompt_frames + (uint32_t) max_tokens + 8u, 64u);
-            cparams.n_batch = std::max<uint32_t>((uint32_t) hdr.prompt_frames, 1u);
-            cparams.n_ubatch = cparams.n_batch;
-            cparams.n_seq_max = 1;
-            cparams.embeddings = false;
+            const uint32_t required_n_ctx = (uint32_t) hdr.prompt_frames + (uint32_t) max_tokens + 8u;
+            const bool needs_fallback_ctx =
+                required_n_ctx > daemon_n_ctx || (uint32_t) hdr.prompt_frames > daemon_n_batch;
 
-            llama_context_ptr ctx(llama_init_from_model(model, cparams));
-            if (!ctx) throw std::runtime_error("failed to create context");
-            llama_set_causal_attn(ctx.get(), true);
-            llama_set_embeddings(ctx.get(), false);
+            llama_context_ptr fallback_ctx;
+            llama_context * ctx = daemon_ctx.get();
+            if (needs_fallback_ctx) {
+                std::cerr << "moss-daemon: request exceeds reusable context (required_n_ctx="
+                          << required_n_ctx
+                          << ", prompt_frames=" << hdr.prompt_frames
+                          << ", daemon_n_ctx=" << daemon_n_ctx
+                          << ", daemon_n_batch=" << daemon_n_batch
+                          << "), using per-request fallback context" << std::endl;
+                fallback_ctx = make_context(
+                    required_n_ctx,
+                    std::max<uint32_t>((uint32_t) hdr.prompt_frames, 1u));
+                ctx = fallback_ctx.get();
+            } else {
+                if (!llama_memory_seq_rm(llama_get_memory(ctx), -1, -1, -1)) {
+                    throw std::runtime_error("failed to clear daemon memory");
+                }
+            }
 
             // Prefill
             {
                 moss_owned_batch batch = moss_batch_from_packed_rows(
                     prompt_packed, 0, hdr.prompt_frames, cfg, 0, true);
-                if (llama_decode(ctx.get(), batch.batch) != 0)
+                if (llama_decode(ctx, batch.batch) != 0)
                     throw std::runtime_error("prefill failed");
             }
 
@@ -2423,7 +2469,7 @@ static void run_daemon_mode(
             moss_rng rng(seed);
 
             for (int32_t step = 0; step < max_tokens; ++step) {
-                const float * logits = llama_get_logits_ith(ctx.get(), -1);
+                const float * logits = llama_get_logits_ith(ctx, -1);
                 if (!logits) throw std::runtime_error("null logits");
 
                 std::vector<float> text_logits(logits, logits + text_vocab_size);
@@ -2438,7 +2484,7 @@ static void run_daemon_mode(
                     generated_packed.size() / cfg.packed_stride() - 1,
                     1, cfg,
                     hdr.prompt_frames + (size_t) step, true);
-                if (llama_decode(ctx.get(), batch.batch) != 0)
+                if (llama_decode(ctx, batch.batch) != 0)
                     throw std::runtime_error("decode step failed");
 
                 if (state.is_stopping) break;

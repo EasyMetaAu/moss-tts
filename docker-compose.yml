@@ -121,6 +121,12 @@ services:
       ONNX_DECODER: "/models/MOSS-Audio-Tokenizer-ONNX/decoder.onnx"
       N_GPU_LAYERS: "-1"
       AUDIO_DECODER_CPU: "1"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:6009/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         reservations:
