@@ -11,7 +11,8 @@
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN rm -f /etc/apt/sources.list.d/cuda*.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     cmake ninja-build gcc g++ git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,6 +22,10 @@ ARG CUDA_ARCHS="86"
 # RTX 3090 = sm_86, RTX 4090 = sm_89 ; set to "86;89" for multi
 RUN git clone --depth 1 --branch ${LLAMA_CPP_BRANCH} \
         https://github.com/OpenMOSS/llama.cpp.git llama.cpp
+
+# Patch: daemon mode for persistent inference
+COPY patches/run-moss-tts-delay.cpp \
+     /build/llama.cpp/tools/tts/run-moss-tts-delay.cpp
 
 # Make libcuda stub visible to the linker as if it were the runtime lib.
 # (Runtime linking will still bind to the host NVIDIA driver via nvidia-container-toolkit.)
@@ -38,7 +43,8 @@ RUN cd llama.cpp \
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN rm -f /etc/apt/sources.list.d/cuda*.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip libsndfile1 libgomp1 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
