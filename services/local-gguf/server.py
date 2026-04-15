@@ -10,6 +10,7 @@ via stdin/stdout JSON with the persistent llama-moss-tts --daemon-mode process.
 Fallback to subprocess-per-request (v1) if daemon fails.
 """
 import io
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +58,9 @@ LANGUAGE_DEFAULT  = os.getenv("LANGUAGE_DEFAULT", "zh")
 # Run ONNX audio encoder/decoder on CPU (default=1: avoids cuDNN runtime requirement).
 # Set to 0 only if cuDNN 9.x is available and onnxruntime-gpu >= 1.20 is installed.
 AUDIO_DECODER_CPU = os.getenv("AUDIO_DECODER_CPU", "1") not in ("0", "false", "False")
+MAX_CONCURRENT_REQUESTS = max(1, int(os.getenv("MOSS_MAX_CONCURRENT_REQUESTS", "1")))
+REQUEST_COOLDOWN_MS = max(0, int(os.getenv("MOSS_REQUEST_COOLDOWN_MS", "50")))
+DAEMON_MONITOR_INTERVAL_S = 2.0
 
 # Add tools/tts to sys.path so we can import moss_tts_processor / moss_tts_onnx
 _tts_tools_dir = str(APP_ROOT / "tools/tts")
@@ -82,6 +89,31 @@ if not READY:
     logger.error("preflight FAILED; /api/generate will 503 until weights are mounted")
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+_daemon_status_lock = threading.Lock()
+_daemon_status = {
+    "alive": False,
+    "pid": None,
+    "last_check_at": _utc_now_iso(),
+    "last_error": None,
+    "restart_count": 0,
+}
+
+
+def _update_daemon_status(**updates) -> None:
+    with _daemon_status_lock:
+        _daemon_status.update(updates)
+        _daemon_status["last_check_at"] = _utc_now_iso()
+
+
+def _daemon_status_snapshot() -> dict:
+    with _daemon_status_lock:
+        return dict(_daemon_status)
+
+
 # ───── MossDaemon: persistent llama-moss-tts process ─────────────────────
 class MossDaemon:
     """Persistent llama-moss-tts daemon: loads GGUF once, serves requests via stdin/stdout."""
@@ -89,7 +121,29 @@ class MossDaemon:
     def __init__(self):
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
+        self._stderr_buffer: deque[str] = deque(maxlen=4000)
+        self._stderr_buffer_lock = threading.Lock()
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._restart_count = 0
+        self._last_request_completed_at = 0.0
         self._start()
+
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        if proc.stderr is None:
+            return
+        try:
+            for line in iter(proc.stderr.readline, ""):
+                if not line:
+                    break
+                with self._stderr_buffer_lock:
+                    self._stderr_buffer.extend(line)
+                logger.warning("moss daemon stderr: %s", line.rstrip())
+        except Exception as exc:
+            logger.debug("stderr drain stopped: %s", exc)
+
+    def _stderr_tail(self) -> str:
+        with self._stderr_buffer_lock:
+            return "".join(self._stderr_buffer).strip()
 
     def _start(self):
         cmd = [
@@ -108,22 +162,55 @@ class MossDaemon:
             stderr=subprocess.PIPE,
             text=True, bufsize=1,
         )
+        self._stderr_buffer.clear()
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr,
+            args=(self._proc,),
+            name="moss-daemon-stderr",
+            daemon=True,
+        )
+        self._stderr_thread.start()
         # Wait for ready signal (reads one JSON line from stdout)
         ready_line = self._proc.stdout.readline().strip()
         if '"ready"' not in ready_line:
-            stderr_peek = ""
-            try:
-                stderr_peek = self._proc.stderr.read(2000)
-            except Exception:
-                pass
-            raise RuntimeError(f"daemon did not send ready signal; got: {ready_line!r}; stderr: {stderr_peek[:500]}")
+            stderr_tail = self._stderr_tail()
+            error = (
+                f"daemon did not send ready signal; got: {ready_line!r}; "
+                f"stderr: {stderr_tail[:500]}"
+            )
+            _update_daemon_status(alive=False, pid=self._proc.pid, last_error=error)
+            raise RuntimeError(error)
         logger.info("moss daemon ready (pid=%d)", self._proc.pid)
+        _update_daemon_status(
+            alive=True,
+            pid=self._proc.pid,
+            last_error=None,
+            restart_count=self._restart_count,
+        )
 
     def _ensure_alive(self):
         if self._proc is None or self._proc.poll() is not None:
-            logger.warning("moss daemon died (rc=%s), restarting",
-                           self._proc.poll() if self._proc else "?")
+            rc = self._proc.poll() if self._proc else "?"
+            stderr_tail = self._stderr_tail()
+            last_error = f"daemon died rc={rc}; stderr_tail={stderr_tail[-1000:]}"
+            logger.warning("moss daemon died (rc=%s), restarting; stderr_tail=%s", rc, stderr_tail[-1000:])
+            _update_daemon_status(
+                alive=False,
+                pid=self._proc.pid if self._proc else None,
+                last_error=last_error,
+                restart_count=self._restart_count,
+            )
+            time.sleep(0.3)
+            self._restart_count += 1
             self._start()
+
+    def _maybe_cooldown(self):
+        if REQUEST_COOLDOWN_MS <= 0:
+            return
+        elapsed = time.monotonic() - self._last_request_completed_at
+        cooldown = REQUEST_COOLDOWN_MS / 1000.0
+        if 0 < elapsed < cooldown:
+            time.sleep(cooldown - elapsed)
 
     def generate_codes(
         self,
@@ -142,10 +229,12 @@ class MossDaemon:
             "seed": seed,
         })
         with self._lock:
+            self._maybe_cooldown()
             self._ensure_alive()
             self._proc.stdin.write(req + "\n")
             self._proc.stdin.flush()
             resp_line = self._proc.stdout.readline().strip()
+            self._last_request_completed_at = time.monotonic()
         if not resp_line:
             raise RuntimeError("daemon returned empty response (may have crashed)")
         return json.loads(resp_line)
@@ -153,11 +242,68 @@ class MossDaemon:
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    @property
+    def restart_count(self) -> int:
+        return self._restart_count
+
+    @property
+    def pid(self) -> Optional[int]:
+        return None if self._proc is None else self._proc.pid
+
+    @property
+    def last_error(self) -> Optional[str]:
+        tail = self._stderr_tail()
+        return tail[-1000:] if tail else None
+
+
+class DaemonMonitor(threading.Thread):
+    def __init__(self, interval_s: float = DAEMON_MONITOR_INTERVAL_S):
+        super().__init__(name="moss-daemon-monitor", daemon=True)
+        self._interval_s = interval_s
+        self._started_once = threading.Event()
+
+    def start_once(self) -> None:
+        if self._started_once.is_set():
+            return
+        self._started_once.set()
+        self.start()
+
+    def run(self) -> None:
+        self.refresh()
+        while True:
+            time.sleep(self._interval_s)
+            self.refresh()
+
+    def refresh(self) -> None:
+        daemon = _daemon
+        alive = False
+        pid = None
+        last_error = None
+        restart_count = 0
+        if daemon is not None:
+            pid = daemon.pid
+            restart_count = daemon.restart_count
+            try:
+                alive = daemon.is_alive()
+            except Exception as exc:
+                last_error = str(exc)
+            else:
+                if not alive:
+                    last_error = daemon.last_error
+        _update_daemon_status(
+            alive=alive,
+            pid=pid,
+            last_error=last_error,
+            restart_count=restart_count,
+        )
+
 
 # ───── Lazy singletons for daemon / tokenizer / onnx ─────────────────────
 _tokenizer = None
 _onnx_tok = None
 _daemon: Optional[MossDaemon] = None
+_daemon_monitor = DaemonMonitor()
+REQUEST_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
 
 REF_MAGIC   = 0x4652474D  # "MGRF"
 REF_VERSION = 1
@@ -395,16 +541,13 @@ def generate_speech(text: str, reference_audio: Optional[Path], language: Option
 
 # ───── Routes ─────────────────────────────────────────────────────────────
 @app.get("/health")
-def health():
-    daemon_alive = False
-    try:
-        daemon_alive = _daemon is not None and _daemon.is_alive()
-    except Exception:
-        pass
+async def health():
+    daemon_status = _daemon_status_snapshot()
     payload = {
         "status":       "ok" if READY else "degraded",
         "ready":        READY,
-        "daemon_alive": daemon_alive,
+        "daemon_alive": daemon_status["alive"],
+        "daemon_status": daemon_status,
         "missing":      MISSING,
         "model_gguf":   str(MODEL_GGUF),
         "tokenizer":    str(TOKENIZER_DIR),
@@ -431,6 +574,8 @@ async def api_generate(
         raise HTTPException(400, "text is required")
     if not READY:
         raise HTTPException(503, f"service not ready; missing: {MISSING}")
+    if not REQUEST_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(429, "too many concurrent requests")
 
     ref_path: Optional[Path] = None
     tmp_ref: Optional[tempfile._TemporaryFileWrapper] = None  # type: ignore
@@ -445,12 +590,18 @@ async def api_generate(
             if ref_path is None:
                 logger.warning("demo_id %s not found in %s", demo_id, VOICES_DIR)
 
-        wav_bytes = generate_speech(text, reference_audio=ref_path, language=language)
+        wav_bytes = await asyncio.to_thread(
+            generate_speech,
+            text,
+            ref_path,
+            language,
+        )
         return Response(content=wav_bytes, media_type="audio/wav")
     except Exception as e:
         logger.error("generate error: %s", e, exc_info=True)
         raise HTTPException(500, str(e))
     finally:
+        REQUEST_SEMAPHORE.release()
         if tmp_ref is not None:
             try:
                 os.unlink(tmp_ref.name)
@@ -461,11 +612,14 @@ async def api_generate(
 @app.on_event("startup")
 async def startup_event():
     """Eagerly start the daemon on server boot so model is loaded before first request."""
+    _daemon_monitor.start_once()
     if READY:
         try:
             _get_daemon()
+            _daemon_monitor.refresh()
             logger.info("daemon pre-started on server boot")
         except Exception as e:
+            _update_daemon_status(alive=False, last_error=str(e))
             logger.warning("failed to pre-start daemon: %s (will retry on first request)", e)
 
 
