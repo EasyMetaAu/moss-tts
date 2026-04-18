@@ -1,4 +1,4 @@
-# Runtime deps for local-gguf: FastAPI wrapper + hybrid e2e (ONNX + subprocess llama-moss-tts)
+# Runtime deps for local: FastAPI wrapper + hybrid e2e (ONNX + subprocess llama-moss-tts)
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9

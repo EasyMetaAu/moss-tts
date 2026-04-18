@@ -1,5 +1,5 @@
 """
-MOSS-TTS Local-GGUF API Server
+MOSS-TTS Local API Server
 Compatible with MOSS-TTS-Nano /api/generate interface.
 
 Path: llama.cpp first-class pipeline (Qwen3 backbone GGUF + ONNX audio tokenizer).

@@ -1,4 +1,4 @@
-# MOSS-TTS Local-GGUF: llama.cpp first-class pipeline (Qwen3 backbone + ONNX audio tokenizer)
+# MOSS-TTS Local: llama.cpp first-class pipeline (Qwen3 backbone + ONNX audio tokenizer)
 # Target VRAM: ~5-6GB on GPU1 (vs ~12.7GB for bf16 local profile)
 #
 # Multi-stage build:
