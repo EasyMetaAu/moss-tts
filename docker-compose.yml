@@ -30,36 +30,6 @@ services:
               capabilities: [gpu]
 
   # ─────────────────────────────────────────────────────────
-  # Profile: local  (MOSS-TTS-Local-Transformer 1.7B, 24kHz)
-  # Start: docker compose --profile local up -d --build
-  # Requires: MODEL_WEIGHTS_DIR pointing to downloaded weights
-  # ─────────────────────────────────────────────────────────
-  moss-local:
-    build:
-      context: ./services/local
-      dockerfile: Dockerfile
-    profiles: ["local"]
-    container_name: moss-tts-local
-    restart: unless-stopped
-    ports:
-      - "${LOCAL_PORT:-6007}:6007"
-    volumes:
-      - ${HF_HOME:-~/.cache/huggingface}:/hf_cache:ro
-      - ${VOICES_DIR:-./voices}:/app/voices:ro
-      - ${MODEL_WEIGHTS_DIR:-/home/lukin/models}:/models:ro
-    environment:
-      <<: *common-env
-      PORT: "6007"
-      MODEL_PATH: "/models/MOSS-TTS-Local-Transformer"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  # ─────────────────────────────────────────────────────────
   # Profile: realtime  (MOSS-TTS-Realtime 1.7B, low-latency)
   # Start: docker compose --profile realtime up -d --build
   # ─────────────────────────────────────────────────────────
@@ -89,26 +59,26 @@ services:
               capabilities: [gpu]
 
   # ─────────────────────────────────────────────────────────
-  # Profile: local-gguf  (MOSS-TTS-Delay Q4_K_M via llama.cpp first-class + ONNX tokenizer)
-  # Measured VRAM: ~5.1GB backbone on GPU (vs ~12.7GB for `local` bf16 profile)
+  # Profile: local  (MOSS-TTS-Delay Q4_K_M via llama.cpp first-class + ONNX tokenizer)
+  # Measured VRAM: ~5.1GB backbone on GPU (memory-efficient GGUF variant)
   # ONNX audio tokenizer runs on CPU (avoids cuDNN requirement)
-  # Start: docker compose --profile local-gguf up -d --build
+  # Start: docker compose --profile local up -d --build
   # Requires:
   #   MODEL_WEIGHTS_DIR/MOSS-TTS-GGUF/first_class/MOSS_TTS_FIRST_CLASS_Q4_K_M.gguf  (4.9GB)
   #   MODEL_WEIGHTS_DIR/MOSS-TTS-GGUF/tokenizer/{tokenizer,vocab,merges}.json
   #   MODEL_WEIGHTS_DIR/MOSS-Audio-Tokenizer-ONNX/{encoder,decoder}.{onnx,data}  (~14GB total)
   # ─────────────────────────────────────────────────────────
-  moss-local-gguf:
+  moss-local:
     build:
-      context: ./services/local-gguf
+      context: ./services/local
       dockerfile: Dockerfile
       args:
         CUDA_ARCHS: "${CUDA_ARCHS:-86}"
-    profiles: ["local-gguf"]
-    container_name: moss-tts-local-gguf
+    profiles: ["local"]
+    container_name: moss-tts-local
     restart: unless-stopped
     ports:
-      - "${LOCAL_GGUF_PORT:-6009}:6009"
+      - "${LOCAL_PORT:-6009}:6009"
     volumes:
       - ${VOICES_DIR:-./voices}:/app/voices:ro
       - ${MODEL_WEIGHTS_DIR:-/home/lukin/models}:/models:ro

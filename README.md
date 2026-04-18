@@ -5,8 +5,7 @@ Multi-model MOSS-TTS deployment with Docker Compose — three model sizes, one u
 | Profile | Model | Parameters | Sample Rate | VRAM | Best For |
 |---------|-------|-----------|-------------|------|----------|
 | `nano` | MOSS-TTS-Nano | ~0.1B | 48kHz stereo | ~2GB | Low-latency, real-time |
-| `local` | MOSS-TTS-Local-Transformer | 1.7B (3B w/ audio tokenizer) | 24kHz mono | ~13GB (bf16) | High-quality article TTS, max fidelity |
-| `local-gguf` | MOSS-TTS-Delay (Q4_K_M) | 8.5B Delay model | 24kHz mono | **~5.1GB** backbone (ONNX on CPU) | High-quality article TTS, memory-constrained GPUs |
+| `local` | MOSS-TTS-Delay (Q4_K_M) | 8.5B Delay model | 24kHz mono | **~5.1GB** backbone (ONNX on CPU) | High-quality article TTS, memory-constrained GPUs |
 | `realtime` | MOSS-TTS-Realtime | 1.7B | 24kHz mono | ~13GB | Multi-turn dialogue |
 
 All services expose a unified `/api/generate` API compatible with the official MOSS-TTS-Nano interface.
@@ -31,7 +30,7 @@ cp .env.example .env
 # Edit .env:
 #   HF_HOME=/path/to/huggingface/cache
 #   VOICES_DIR=/path/to/voices
-#   NANO_PORT=6006   LOCAL_PORT=6007   REALTIME_PORT=6008
+#   NANO_PORT=6006   LOCAL_PORT=6009   REALTIME_PORT=6008
 ```
 
 ### 3. Set up voices
@@ -42,16 +41,17 @@ CHATTERBOX_VOICES_DIR=/home/lukin/code/chatterbox-api/voices \
     bash scripts/setup-voices.sh
 ```
 
-### 4. Download model weights (for local/realtime profiles)
+### 4. Download model weights (for realtime profile)
 
 ```bash
 # Requires Python + huggingface_hub
 HF_ENDPOINT=https://hf-mirror.com python3 -c "
 from huggingface_hub import snapshot_download
-snapshot_download('OpenMOSS-Team/MOSS-TTS-Local-Transformer')
 snapshot_download('OpenMOSS-Team/MOSS-TTS-Realtime')
 "
 ```
+
+See the next section for the `local` profile weights (GGUF + ONNX).
 
 ### 5. Start services
 
@@ -59,7 +59,7 @@ snapshot_download('OpenMOSS-Team/MOSS-TTS-Realtime')
 # Nano only (uses pre-built image, fast start)
 docker compose --profile nano up -d
 
-# Local-Transformer (build + run)
+# Local (GGUF + ONNX, build + run)
 docker compose --profile local up -d --build
 
 # Realtime
@@ -69,9 +69,9 @@ docker compose --profile realtime up -d --build
 docker compose --profile nano --profile local up -d
 ```
 
-### 6. `local-gguf` profile: memory-optimized variant
+### 6. `local` profile: memory-optimized GGUF variant
 
-The `local-gguf` profile runs MOSS-TTS-Delay via [OpenMOSS/llama.cpp first-class pipeline](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md) (Qwen3 backbone as GGUF + ONNX audio tokenizer). Same `/api/generate` contract as `local`, but ~60% smaller VRAM footprint.
+The `local` profile runs MOSS-TTS-Delay via [OpenMOSS/llama.cpp first-class pipeline](https://github.com/OpenMOSS/llama.cpp/blob/moss-tts-firstclass/docs/moss-tts-firstclass-e2e.md) (Qwen3 backbone as GGUF + ONNX audio tokenizer). Exposes the same `/api/generate` contract as other profiles, with ~5.1GB VRAM backbone.
 
 **Weights needed** (place under `MODEL_WEIGHTS_DIR`):
 
@@ -133,7 +133,7 @@ cp ~/models/MOSS-TTS-hf/{tokenizer.json,tokenizer_config.json,vocab.json,merges.
 
 ```bash
 # First build is slow (~30-60 min on 1x 3090): compiles llama.cpp CUDA
-docker compose --profile local-gguf up -d --build
+docker compose --profile local up -d --build
 
 # Smoke test
 curl -X POST http://localhost:6009/api/generate \
@@ -141,9 +141,9 @@ curl -X POST http://localhost:6009/api/generate \
   --output out.wav
 ```
 
-**Tradeoffs vs `local`:**
+**Notes:**
 
-- ✅ VRAM: **~5.1GB** backbone on GPU vs ~13GB bf16 (measured on RTX 3090)
+- ✅ VRAM: **~5.1GB** backbone on GPU (measured on RTX 3090)
 - ✅ No pytorch in runtime image (smaller image)
 - ⚠️ First-token latency: ~5-10s (subprocess cold-load per request). Acceptable for batch article TTS; not suited for interactive use.
 - ⚠️ Q4_K_M quantization; subjective quality delta vs bf16 reported by OpenMOSS as minimal for Chinese/English.

@@ -1,7 +1,7 @@
 """
 Tests for split_text() segmentation and /health endpoint (503 gate).
 
-Run:  MOSS_PREFLIGHT=0 pytest services/local-gguf/test_split_text.py -v
+Run:  MOSS_PREFLIGHT=0 pytest services/local/test_split_text.py -v
 """
 import os
 
