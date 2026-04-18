@@ -1,12 +1,10 @@
+# Runtime deps for local-gguf: FastAPI wrapper + hybrid e2e (ONNX + subprocess llama-moss-tts)
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
-pydantic>=2.0.0
-torch==2.7.0
-torchaudio==2.7.0
---extra-index-url https://download.pytorch.org/whl/cu126
-transformers==5.0.0
-huggingface_hub>=0.22.0
-soundfile>=0.12.1
-numpy>=1.24.0
 python-multipart>=0.0.9
-aiohttp>=3.10.0
+soundfile>=0.12
+numpy>=1.24,<3
+# CPU-only onnxruntime avoids cuDNN dependency for the audio decoder step.
+# Switch to onnxruntime-gpu>=1.20 if cuDNN 9.x is available and AUDIO_DECODER_CPU=0.
+onnxruntime>=1.20
+tokenizers>=0.20
